@@ -27,12 +27,15 @@
 {% def getter(parent, obj, prop, indexes) %}\
 {% choose %}\
 {% when len(indexes) > 0 and prop.maxOccurs > 1 %}\
+  /* @see http://git.openmicroscopy.org/src/master/components/specification/Documentation/Generated/OME-2011-06/ome_xsd.html#${obj.name}_${prop.name} */
 	public ${prop.metadataStoreType} get{% if is_multi_path[o.name] %}${parent}{% end %}${obj.name}${prop.name}(${indexes_string(indexes)}, ${index_string(prop.name)})
 {% end %}\
 {% when len(indexes) > 0 %}\
+  /* @see http://git.openmicroscopy.org/src/master/components/specification/Documentation/Generated/OME-2011-06/ome_xsd.html#${obj.name}_${prop.name} */
 	public ${prop.metadataStoreType} get{% if is_multi_path[o.name] %}${parent}{% end %}${obj.name}${prop.name}(${indexes_string(indexes)})
 {% end %}\
 {% otherwise %}\
+  /* @see http://git.openmicroscopy.org/src/master/components/specification/Documentation/Generated/OME-2011-06/ome_xsd.html#${obj.name}_${prop.name} */
 	public ${prop.metadataStoreType} get{% if is_multi_path[o.name] %}${parent}{% end %}${obj.name}${prop.name}(${index_string(prop.name)})
 {% end %}\
 {% end %}\
@@ -68,12 +71,15 @@
 {% def setter(parent, obj, prop, indexes) %}\
 {% choose %}\
 {% when len(indexes) > 0 and prop.maxOccurs > 1 %}\
+  /* @see http://git.openmicroscopy.org/src/master/components/specification/Documentation/Generated/OME-2011-06/ome_xsd.html#${obj.name}_${prop.name} */
 	public void set{% if is_multi_path[o.name] %}${parent}{% end %}${obj.name}${prop.name}(${prop.metadataStoreType} ${prop.javaArgumentName}, ${indexes_string(indexes)}, ${index_string(prop.name)})
 {% end %}\
 {% when len(indexes) > 0 %}\
+  /* @see http://git.openmicroscopy.org/src/master/components/specification/Documentation/Generated/OME-2011-06/ome_xsd.html#${obj.name}_${prop.name} */
 	public void set{% if is_multi_path[o.name] %}${parent}{% end %}${obj.name}${prop.name}(${prop.metadataStoreType} ${prop.javaArgumentName}, ${indexes_string(indexes)})
 {% end %}\
 {% otherwise %}\
+  /* @see http://git.openmicroscopy.org/src/master/components/specification/Documentation/Generated/OME-2011-06/ome_xsd.html#${obj.name}_${prop.name} */
 	public void set{% if is_multi_path[o.name] %}${parent}{% end %}${obj.name}${prop.name}(${prop.metadataStoreType} ${prop.javaArgumentName})
 {% end %}\
 {% end %}\
