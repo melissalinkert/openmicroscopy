@@ -294,6 +294,7 @@ public class AggregateMetadata implements IMetadata
 
 	// -- AggregateMetadata API methods --
 
+  // -- Deprecated methods (manual definitions) --
 
 	// -- Entity counting (manual definitions) --
 

@@ -175,6 +175,9 @@ public class DummyMetadata implements IMetadata
 	{
 	}
 
+  // -- Deprecated methods (manual definitions) --
+
+
 	// -- Entity counting (manual definitions) --
 
 	public int getPixelsBinDataCount(int imageIndex)

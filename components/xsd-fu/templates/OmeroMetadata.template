@@ -395,6 +395,8 @@ public class OmeroMetadata implements MetadataRetrieve {
         return null;
     }
 
+    // -- Deprecated methods (manual definitions) --
+
     // -- Entity counting --
 
 {% for o in sorted(model.objects.values(), lambda x, y: cmp(x.name, y.name)) %}\

@@ -323,6 +323,9 @@ public class OMEXMLMetadataImpl extends AbstractOMEXMLMetadata
 		return model.resolveReferences();
 	}
 
+  // -- Deprecated methods (manual definitions) --
+
+
 	// -- Entity counting (manual definitions) --
 
 	public int getPixelsBinDataCount(int imageIndex)

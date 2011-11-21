@@ -121,6 +121,8 @@ import ome.xml.model.primitives.*;
  */
 public interface MetadataRetrieve {
 
+  // -- Deprecated methods (manual definitions) --
+
 	// -- Entity counting (manual definitions) --
 
 	int getPixelsBinDataCount(int imageIndex);

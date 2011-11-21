@@ -138,7 +138,10 @@ public interface MetadataStore
 	Object getRoot();
 
 	void setRoot(Object root);
-	
+
+  // -- Deprecated methods (manual definitions) --
+
+
 	// -- Entity storage (manual definitions) --
 
 	void setPixelsBinDataBigEndian(Boolean bigEndian, int imageIndex, int binDataIndex);

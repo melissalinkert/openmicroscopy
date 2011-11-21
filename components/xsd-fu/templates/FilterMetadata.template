@@ -195,6 +195,9 @@ public class FilterMetadata implements MetadataStore
 
 	// -- AggregateMetadata API methods --
 
+  // -- Deprecated methods (manual definitions) --
+
+
 	// -- Entity storage (manual definitions) --
 
 	public void setPixelsBinDataBigEndian(Boolean bigEndian, int imageIndex, int binDataIndex)
