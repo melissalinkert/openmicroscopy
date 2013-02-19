@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <project name="romio" default="install" basedir=".">
 
+    <property name="main.class" value="ome.io.nio.PixelsService"/>
     <property name="import.dir" value="${basedir}/../antlib/resources"/>
     <import file="${import.dir}/global.xml"/>
     <import file="${import.dir}/lifecycle.xml"/>
@@ -14,5 +15,42 @@
         </unjar>
     </target>
 
+    <macrodef name="run_romio">
+        <element name="args" implicit="yes"/>
+        <sequential>
+            <echo append="false" file="${target.dir}/log4j.properties">
+log4j.rootCategory=debug, stderr
+log4j.appender.stderr=org.apache.log4j.ConsoleAppender
+log4j.appender.stderr.target=System.err
+log4j.appender.stderr.layout=org.apache.log4j.PatternLayout
+log4j.appender.stderr.layout.ConversionPattern = %d %-10.10r [%10.10t] %-6.6p %40.40c %x - %m\n
+            </echo>
+            <java classname="${main.class}" failonerror="true" fork="true">
+                <classpath>
+                    <path refid="omero.classpath"/>
+                    <pathelement location="${classes.dir}"/>
+                </classpath>
+                <jvmarg value="-Dlog4j.configuration=file://${target.dir}/log4j.properties"/>
+                <args/>
+            </java>
+        </sequential>
+    </macrodef>
+
+    <target name="pyramid" depends="install">
+        <if><not><isset property="args"/></not>
+            <then>
+                <echo>Bad arguments! Use -Dargs="..."</echo>
+                <run_romio>
+                    <arg value="pyramid"/>
+                </run_romio>
+            </then>
+            <else>
+                <run_romio>
+                    <arg value="pyramid"/>
+                    <arg line="${args}"/>
+                </run_romio>
+            </else>
+        </if>
+    </target>
 
 </project>

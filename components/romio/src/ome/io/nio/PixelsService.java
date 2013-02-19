@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,7 @@ import ome.io.bioformats.BfPixelBuffer;
 import ome.io.bioformats.BfPyramidPixelBuffer;
 import ome.io.messages.MissingPyramidMessage;
 import ome.model.core.Pixels;
+import ome.model.enums.PixelsType;
 import ome.model.stats.StatsInfo;
 import ome.util.PixelData;
 
@@ -724,5 +726,34 @@ public class PixelsService extends AbstractFileSystemService
             }
             return statsInfo;
         }
+    }
+
+    /**
+     * Public method, primarily for the generation of pyramids.
+     */
+    public static void main(String[] args) {
+    	if (args.length == 0) {
+    		help(args);
+    	} else if ("pyramid".equals(args[0])) {
+    		PixelsService service = new PixelsService(args[1]);
+    		Pixels pixels = new Pixels();
+    		pixels.setId(Long.valueOf(args[2]));
+    		pixels.setSizeX(Integer.valueOf(args[3]));
+    		pixels.setSizeY(Integer.valueOf(args[4]));
+    		pixels.setSizeZ(Integer.valueOf(args[5]));
+    		pixels.setSizeT(Integer.valueOf(args[6]));
+    		pixels.setSizeC(Integer.valueOf(args[7]));
+    		pixels.setPixelsType(new PixelsType(args[8]));
+    		service.makePyramid(pixels);
+    	} else {
+    		help(args);
+    	}
+    }
+
+    private static void help(String[] args) {
+    	if (args == null || args.length > 0) {
+    		System.err.println("Unknown command: " + Arrays.asList(args));
+    	}
+    	System.err.println("Usage: java ome.io.nio.PixelsService pyramid /OMERO/Files id x y z t c type");
     }
 }
