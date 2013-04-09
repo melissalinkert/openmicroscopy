@@ -25,7 +25,6 @@ import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
-import loci.formats.tiff.TiffCompression;
 import ome.conditions.ApiUsageException;
 import ome.conditions.LockTimeout;
 import ome.io.nio.ConfiguredTileSizes;
@@ -34,9 +33,6 @@ import ome.io.nio.PixelBuffer;
 import ome.io.nio.TileSizes;
 import ome.model.core.Pixels;
 import ome.util.PixelData;
-import ome.xml.model.enums.DimensionOrder;
-import ome.xml.model.enums.EnumerationException;
-import ome.xml.model.primitives.PositiveInteger;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.logging.Log;
@@ -75,18 +71,6 @@ public class BfPyramidPixelBuffer implements PixelBuffer {
 
     /** The OMERO pixels set we're backing. */
     private final Pixels pixels;
-
-    /** Last IFD we used during a tile write operation. */
-    private IFD lastIFD;
-
-    /** Last z-section offset we used during a tile write operation. */
-    private int lastZ = -1;
-
-    /** Last channel offset we used during a tile write operation. */
-    private int lastC = -1;
-
-    /** Last timepoint offset  we used during a tile write operation. */
-    private int lastT = -1;
 
     /** Metadata implementation used when writing. */
     private IMetadata metadata;
@@ -218,96 +202,18 @@ public class BfPyramidPixelBuffer implements PixelBuffer {
             OMEXMLService service =
                 lociServiceFactory.getInstance(OMEXMLService.class);
             metadata = service.createOMEXMLMetadata();
-            addSeries(tileWidth, tileLength);
             writer = new OmeroPixelsPyramidWriter();
             writer.setMetadataRetrieve(metadata);
             writer.setCompression(compression);
             writer.setWriteSequentially(true);
             writer.setInterleaved(true);
             writer.setBigTiff(bigTiff);
+            writer.setupTileMetadata(0, tileWidth, tileLength);
             writer.setId(output);
         }
         catch (Exception e)
         {
             throw new FormatException("Error instantiating service.", e);
-        }
-    }
-
-    /**
-     * Creates a new series for the destination metadata store.
-     * @param metadata Metadata store and retrieve implementation.
-     * @param pixels Source pixels set.
-     * @param series Destination series.
-     * @param sizeX Destination X width. Not necessarily
-     * <code>Pixels.SizeX</code>.
-     * @param sizeY Destination Y height. Not necessarily
-     * <code>Pixels.SizeY</code>.
-     * @throws EnumerationException
-     */
-    private void createSeries(int series, int sizeX, int sizeY)
-        throws EnumerationException
-    {
-        metadata.setImageID("Image:" + series, series);
-        metadata.setPixelsID("Pixels: " + series, series);
-        metadata.setPixelsBinDataBigEndian(
-                byteOrder == ByteOrder.BIG_ENDIAN? true : false, series, 0);
-        metadata.setPixelsDimensionOrder(DimensionOrder.XYZCT, series);
-        metadata.setPixelsType(ome.xml.model.enums.PixelType.fromString(
-                pixels.getPixelsType().getValue()), series);
-        metadata.setPixelsSizeX(new PositiveInteger(sizeX), series);
-        metadata.setPixelsSizeY(new PositiveInteger(sizeY), series);
-        metadata.setPixelsSizeZ(new PositiveInteger(1), series);
-        metadata.setPixelsSizeC(new PositiveInteger(1), series);
-        int totalPlanes =
-            pixels.getSizeZ() * pixels.getSizeC() * pixels.getSizeT();
-        metadata.setPixelsSizeT(new PositiveInteger(totalPlanes), series);
-        metadata.setChannelID("Channel:" + series, series, 0);
-        metadata.setChannelSamplesPerPixel(new PositiveInteger(1), series, 0);
-        if (log.isDebugEnabled())
-        {
-            log.debug(String.format("Added series %d %dx%dx%d",
-                    series, sizeX, sizeY, totalPlanes));
-        }
-    }
-
-    /**
-     * During tile writing, adds additional all series.
-     * @param tileWidth Tile width of full resolution tiles.
-     * @param tileLength Tile length of full resolution tiles.
-     * @throws EnumerationException
-     */
-    private void addSeries(int tileWidth, int tileLength)
-        throws EnumerationException
-    {
-        int series = 0;
-        for (int level : new int[] { 0, 5, 4 })
-        {
-            long imageWidth = pixels.getSizeX();
-            long imageLength = pixels.getSizeY();
-            long factor = (long) Math.pow(2, level);
-            long newTileWidth = Math.round((double) tileWidth / factor);
-            newTileWidth = newTileWidth < 1? 1 : newTileWidth;
-            long newTileLength = Math.round((double) tileLength / factor);
-            newTileLength = newTileLength < 1? 1: newTileLength;
-            long evenTilesPerRow = imageWidth / tileWidth;
-            long evenTilesPerColumn = imageLength / tileLength;
-            double remainingWidth =
-                    ((double) (imageWidth - (evenTilesPerRow * tileWidth))) /
-                    factor;
-            remainingWidth = remainingWidth < 1? Math.ceil(remainingWidth) :
-                Math.round(remainingWidth);
-            double remainingLength =
-              ((double) imageLength - (evenTilesPerColumn * tileLength)) /
-              factor;
-            remainingLength = remainingLength < 1? Math.ceil(remainingLength) :
-                Math.round(remainingLength);
-            int newImageWidth = (int) ((evenTilesPerRow * newTileWidth) +
-                remainingWidth);
-            int newImageLength = (int) ((evenTilesPerColumn * newTileLength) +
-                remainingLength);
-
-            createSeries(series, newImageWidth, newImageLength);
-            series++;
         }
     }
 
@@ -485,63 +391,20 @@ public class BfPyramidPixelBuffer implements PixelBuffer {
             int planeNumber = FormatTools.getIndex(
                     "XYZCT", getSizeZ(), getSizeC(), getSizeT(), planeCount,
                     z, c, t);
-            IFD ifd = getIFD(z, c, t, w, h);
             if (log.isDebugEnabled())
             {
                 log.debug(String.format(
-                        "Writing tile planeNumber:%d bufferSize:%d ifd:%s " +
+                        "Writing tile planeNumber:%d bufferSize:%d " +
                         "x:%d y:%d w:%d h:%d", planeNumber, buffer.length,
-                        ifd.toString(), x, y, w, h));
+                        x, y, w, h));
             }
-            writer.saveBytes(planeNumber, buffer, ifd, x, y, w, h);
+
+            writer.saveBytes(planeNumber, buffer, x, y, w, h);
         }
         catch (FormatException e)
         {
             throw new RuntimeException(e);
         }
-    }
-
-    /**
-     * Retrieves the IFD that should be used for a given planar offset.
-     * @param z Z-section offset requested.
-     * @param c Channel offset requested.
-     * @param t Timepoint offset requested.
-     * @param w Tile width requested.
-     * @param h Tile height requested.
-     * @return A new or already allocated IFD for use when writing tiles.
-     */
-    private synchronized IFD getIFD(int z, int c, int t, int w, int h)
-    {
-        if (lastT == -1 && lastC == -1 && lastZ == -1)
-        {
-            try
-            {
-                initializeWriter(writerFile.getAbsolutePath(),
-                        TiffCompression.JPEG_2000.getCodecName(), true, w, h);
-            }
-            catch (Exception e)
-            {
-                throw new RuntimeException(e);
-            }
-        }
-        if (lastT != t || lastC != c || lastZ != z)
-        {
-            lastIFD = new IFD();
-            lastIFD.put(IFD.IMAGE_DESCRIPTION,
-                        OmeroPixelsPyramidWriter.IMAGE_DESCRIPTION);
-            lastIFD.put(IFD.TILE_WIDTH, w);
-            lastIFD.put(IFD.TILE_LENGTH, h);
-            if (log.isDebugEnabled())
-            {
-                log.debug(String.format(
-                        "Creating new IFD z:%d c:%d t:%d w:%d: h:%d -- %s",
-                        z, c, t, w, h, lastIFD));
-            }
-        }
-        lastT = t;
-        lastC = c;
-        lastZ = z;
-        return lastIFD;
     }
 
     /**
