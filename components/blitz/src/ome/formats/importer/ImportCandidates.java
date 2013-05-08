@@ -18,11 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static omero.rtypes.rint;
-import static omero.rtypes.rstring;
-
+import loci.formats.DirectoryParser;
 import loci.formats.FileInfo;
-import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.MissingLibraryException;
 import loci.formats.UnknownFormatException;
@@ -31,13 +28,7 @@ import loci.formats.in.DefaultMetadataOptions;
 import loci.formats.in.MetadataLevel;
 import ome.formats.ImageNameMetadataStore;
 import ome.formats.importer.util.ErrorHandler;
-import omero.model.Pixels;
-import omero.model.PixelsI;
-import omero.model.PixelsType;
-import omero.model.PixelsTypeI;
 
-import org.apache.commons.io.DirectoryWalker;
-import org.apache.commons.io.filefilter.TrueFileFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,7 +41,7 @@ import org.slf4j.LoggerFactory;
  *
  * @since Beta4.1
  */
-public class ImportCandidates extends DirectoryWalker
+public class ImportCandidates extends DirectoryParser
 {
 
     /**
@@ -104,14 +95,6 @@ public class ImportCandidates extends DirectoryWalker
         }
     }
 
-    /**
-     * Marker exception raised if the {@link SCANNING#cancel()} method is
-     * called by an {@link IObserver} instance.
-     */
-    public static class CANCEL extends RuntimeException {
-
-	private static final long serialVersionUID = 1L;};
-
     final private static Logger log = LoggerFactory.getLogger(ImportCandidates.class);
 
     final public static int DEPTH = Integer.valueOf(
@@ -122,43 +105,7 @@ public class ImportCandidates extends DirectoryWalker
 
     final private IObserver observer;
     final private OMEROWrapper reader;
-    final private Set<String> allFiles = new HashSet<String>();
-    final private Map<String, List<String>> usedBy = new LinkedHashMap<String, List<String>>();
     final private List<ImportContainer> containers = new ArrayList<ImportContainer>();
-    final private long start = System.currentTimeMillis();
-
-    /**
-     * Time take for {@link IFormatReader#setId()}
-     */
-    long readerTime = 0;
-
-    /**
-     * Current count of calls to {@link IFormatReader#setId()}.
-     */
-    int setids = 0;
-
-    /**
-     * Number of times UNKNOWN_EVENT was raised
-     */
-    int unknown = 0;
-
-    /**
-     * Current count of files processed. This will be incremented in two phases:
-     * once during directory counting, and once during parsing.
-     */
-    int count = 0;
-
-    /**
-     * Total number of files which have been / will be examined. During the
-     * first pass, this value is negative.
-     */
-    int total = -1;
-
-    /**
-     * Whether or not one of the {@link SCANNING} events had {@link SCANNING#cancel()}
-     * called.
-     */
-    boolean cancelled = false;
 
     /**
      * Calls {@link #ImportCandidates(int, OMEROWrapper, String[], IObserver)}
@@ -200,11 +147,9 @@ public class ImportCandidates extends DirectoryWalker
     public ImportCandidates(int depth, OMEROWrapper reader, String[] paths,
             IObserver observer)
     {
-        super(TrueFileFilter.INSTANCE, depth);
+        super(reader, depth, new DefaultMetadataOptions(METADATA_LEVEL));
         this.reader = reader;
         this.observer = observer;
-        log.info(String.format("Depth: %s Metadata Level: %s", depth,
-                METADATA_LEVEL));
 
         if (paths != null && paths.length == 2 && "".equals(paths[0])
                 && "".equals(paths[1]))
@@ -216,37 +161,27 @@ public class ImportCandidates extends DirectoryWalker
             return;
         }
 
-        if (paths == null || paths.length == 0)
-        {
-            return;
-        }
+        List<FileInfo> filesets = getFilesets(paths);
+        ImportConfig config = reader.getConfig();
+        String configImageName = config.userSpecifiedName.get();
+        for (FileInfo fileset : filesets) {
+          ImportContainer ic = new ImportContainer(
+            new File(fileset.filename), null, null,
+            fileset.reader.getCanonicalName(),
+            fileset.usedFiles, fileset.isSPW);
+          ic.setDoThumbnails(config.doThumbnails.get());
 
-        Groups g;
-        try {
-            execute(paths);
-            total = count;
-            count = 0;
-            execute(paths);
-            g = new Groups(usedBy);
-            g.parse(containers);
-            long totalElapsed = System.currentTimeMillis() - start;
-            log.info(String.format("%s file(s) parsed into "
-                    + "%s group(s) with %s call(s) to setId in "
-                    + "%sms. (%sms total) [%s unknowns]", this.total, size(), this.setids,
-                    readerTime, totalElapsed, unknown));
-        } catch (CANCEL c)
-        {
-            log.info(String.format("Cancelling search after %sms "
-                    + "with %s containers found (%sms in %s calls to setIds)",
-                    (System.currentTimeMillis() - start), containers.size(),
-                    readerTime, setids));
-            containers.clear();
-            cancelled = true;
-            g = null;
-            total = -1;
-            count = -1;
-        }
+          if (configImageName == null) {
+            ic.setUserSpecifiedName(fileset.filename);
+          }
+          else {
+            ic.setUserSpecifiedName(configImageName);
+          }
+          ic.setUserSpecifiedDescription(config.userSpecifiedDescription.get());
+          ic.setCustomAnnotationList(config.annotations.get());
 
+          containers.add(ic);
+        }
     }
 
     /**
@@ -278,69 +213,6 @@ public class ImportCandidates extends DirectoryWalker
     }
 
     /**
-     * @return containers size
-     */
-    public int size()
-    {
-        return containers.size();
-    }
-
-    /**
-     * @return if import was cancelled
-     */
-    public boolean wasCancelled()
-    {
-        return cancelled;
-    }
-
-    /**
-     * @return array of string paths for files in containers
-     */
-    public List<String> getPaths()
-    {
-        List<String> paths = new ArrayList<String>();
-        for (ImportContainer i : containers)
-        {
-            paths.add(i.getFile().getAbsolutePath());
-        }
-        return paths;
-    }
-
-    /**
-     * Retrieve reader type for file specified in path
-     *
-     * @param path - absolute path for container
-     * @return reader type
-     */
-    public String getReaderType(String path)
-    {
-        for (ImportContainer i : containers) {
-            if (i.getFile().getAbsolutePath().equals(path)) {
-                return i.getReader();
-            }
-        }
-        throw new RuntimeException("Unfound reader for: " + path);
-    }
-
-    /**
-     * Return string of files used by container item at path
-     *
-     * @param path - absolute path for container
-     * @return string array of used files
-     */
-    public String[] getUsedFiles(String path)
-    {
-        for (ImportContainer i : containers)
-        {
-            if (i.getFile().getAbsolutePath().equals(path))
-            {
-                return i.getUsedFiles();
-            }
-        }
-        throw new RuntimeException("Unfound reader for: " + path);
-    }
-
-    /**
      * @return all containers as a array list
      */
     public List<ImportContainer> getContainers()
@@ -349,200 +221,22 @@ public class ImportCandidates extends DirectoryWalker
     }
 
     /**
-     * Method called during
-     * {@link ImportCandidates#ImportCandidates(OMEROWrapper, String[], IObserver)}
-     * to operate on all the given paths. This will be called twice: once
-     * without reading the files, and once (with the known total) using
-     * {@link #reader}
-     *
-     * @param paths
-     */
-    protected void execute(String[] paths)
-    {
-        for (String string : paths)
-        {
-            try {
-                File f = new File(string);
-                if (f.isDirectory())
-                {
-                    walk(f, null);
-                } else
-                {
-                    handleFile(f, 0, null);
-                }
-                // Forcing an event for each path, so that at least one
-                // event is raised per file despite the count of handlefile.
-                scanWithCancel(f, 0);
-            } catch (IOException e)
-            {
-                throw new RuntimeException(e);
-            }
-        }
-    }
-
-    /**
-     * Return an import container for a single file
-     * @param file - single file
-     * @return importer container
-     */
-    protected ImportContainer singleFile(File file, ImportConfig config)
-    {
-
-        if (file == null) {
-            // Can't do anything about it.
-            return null;
-        }
-
-        final String path = file.getAbsolutePath();
-        if (!file.exists() || !file.canRead()) {
-            safeUpdate(new ErrorHandler.UNREADABLE_FILE(path,
-                new java.io.FileNotFoundException(path), this));
-            return null;
-        }
-
-        String format = null;
-        String[] usedFiles = new String[] { path };
-        long start = System.currentTimeMillis();
-        try {
-
-            try {
-                setids++;
-                reader.close();
-                reader.setMetadataStore(new ImageNameMetadataStore());
-                reader.setMetadataOptions(
-                        new DefaultMetadataOptions(METADATA_LEVEL));
-                reader.setId(path);
-                format = reader.getFormat();
-                usedFiles = getOrderedFiles();
-                String[] domains = reader.getReader().getDomains();
-                boolean isSPW = Arrays.asList(domains).contains(FormatTools.HCS_DOMAIN);
-
-                final String readerClassName = reader.unwrap().getClass().getCanonicalName();
-                ImportContainer ic = new ImportContainer(file, null, null,
-                        readerClassName, usedFiles, isSPW);
-                ic.setDoThumbnails(config.doThumbnails.get());
-                String configImageName = config.userSpecifiedName.get();
-                if (configImageName == null)
-                {
-                    ic.setUserSpecifiedName(path);
-                }
-                else
-                {
-                    ic.setUserSpecifiedName(configImageName);
-                }
-                ic.setUserSpecifiedDescription(config.userSpecifiedDescription.get());
-                ic.setCustomAnnotationList(config.annotations.get());
-                return ic;
-            } finally
-            {
-                readerTime += (System.currentTimeMillis() - start);
-                reader.close();
-            }
-
-        } catch (UnsupportedCompressionException uce)
-        {
-            unknown++;
-            // Handling as UNKNOWN_FORMAT for 4.3.0
-            safeUpdate(new ErrorHandler.UNKNOWN_FORMAT(path, uce, this));
-        } catch (UnknownFormatException ufe)
-        {
-            unknown++;
-            safeUpdate(new ErrorHandler.UNKNOWN_FORMAT(path, ufe, this));
-        } catch (MissingLibraryException mle)
-        {
-            safeUpdate(new ErrorHandler.MISSING_LIBRARY(path, mle, usedFiles, format));
-        } catch (Throwable t)
-        {
-            Exception e = null;
-            if (t instanceof Exception) {
-                e = (Exception) t;
-            }
-            else {
-                e = new Exception(t);
-            }
-            safeUpdate(new ErrorHandler.FILE_EXCEPTION(path, e, usedFiles, format));
-        }
-
-        return null;
-
-    }
-
-    /**
-     * Retrieves Image names for each image that Bio-Formats has detected.
-     * @return See A list of Image names, in the order of <i>series</i>.
-     */
-    private List<String> getImageNames() {
-        List<String> toReturn = new ArrayList<String>();
-        Map<Integer, String> imageNames = ((ImageNameMetadataStore)
-                reader.getMetadataStore()).getImageNames();
-        for (int i = 0; i < reader.getSeriesCount(); i++) {
-            toReturn.add(imageNames.get(i));
-        }
-        return toReturn;
-    }
-
-    /**
-     * Creates a Pixels object populated with the dimensions for each image
-     * that Bio-Formats has detected.
-     * @return A list of Pixels objects, in the order of <i>series</i>
-     * populated with dimensions X, Y, Z, C and T.
-     */
-    private List<Pixels> getPixelsWithDimensions()
-    {
-        List<Pixels> toReturn = new ArrayList<Pixels>();
-        for (int i = 0; i < reader.getSeriesCount(); i++)
-        {
-            reader.setSeries(i);
-            Pixels pixels = new PixelsI();
-            PixelsType pixelsType = new PixelsTypeI();
-            pixelsType.setValue(rstring(
-                    FormatTools.getPixelTypeString(reader.getPixelType())));
-            pixels.setSizeX(rint(reader.getSizeX()));
-            pixels.setSizeY(rint(reader.getSizeY()));
-            pixels.setSizeZ(rint(reader.getSizeZ()));
-            pixels.setSizeC(rint(reader.getSizeC()));
-            pixels.setSizeT(rint(reader.getSizeT()));
-            pixels.setPixelsType(pixelsType);
-            toReturn.add(pixels);
-        }
-        return toReturn;
-    }
-
-    /**
-     * This method uses the {@link FileInfo#usedToInitialize} flag to re-order
-     * used files. All files which can be used to initialize a fileset are
-     * returned first.
-     */
-    private String[] getOrderedFiles() {
-
-        FileInfo[] infos = reader.getAdvancedUsedFiles(false);
-        String[] usedFiles = new String[infos.length];
-
-        int count = 0;
-        for (int i = 0; i < usedFiles.length; i++) {
-            if (infos[i].usedToInitialize) {
-                usedFiles[count++] = infos[i].filename;
-            }
-        }
-        for (int i = 0; i < usedFiles.length; i++) {
-            if (!infos[i].usedToInitialize) {
-                usedFiles[count++] = infos[i].filename;
-            }
-        }
-        return usedFiles;
-    }
-
-    /**
      * @param f
      * @param d
      * @throws CANCEL
      */
-    private void scanWithCancel(File f, int d) throws CANCEL{
+    @Override
+    protected void scanWithCancel(File f, int d) throws CANCEL{
         SCANNING s = new SCANNING(f, d, count, total);
         safeUpdate(s);
         if (s.cancel) {
             throw new CANCEL();
         }
+    }
+
+    @Override
+    protected void safeUpdate(String path, Throwable t) {
+      // TODO
     }
 
     /**
@@ -558,246 +252,6 @@ public class ImportCandidates extends DirectoryWalker
                     String.format("Error on %s with %s", observer, event),
                     ex);
         }
-    }
-
-    /**
-     * Handle a file import
-     *
-     * @param file - file selected
-     * @param depth - depth of scan
-     * @param collection
-     */
-    @SuppressWarnings("unchecked")
-	@Override
-    public void handleFile(File file, int depth, Collection collection) {
-
-        count++;
-
-        // Our own filtering
-        if (file.getName().startsWith(".")) {
-            return; // Omitting dot files.
-        }
-
-        // If this is the 100th file, publish an event
-        if (count%100 == 0) {
-            scanWithCancel(file, depth);
-        }
-
-        // If this is just a count, return
-        if (total < 0) {
-            return;
-        }
-
-        // Optimization.
-        if (allFiles.contains(file.getAbsolutePath())) {
-            return;
-        }
-
-        ImportContainer info = singleFile(file, reader.getConfig());
-        if (info == null) {
-            return;
-        }
-
-        containers.add(info);
-        allFiles.addAll(Arrays.asList(info.getUsedFiles()));
-        for (String string : info.getUsedFiles()) {
-            List<String> users = usedBy.get(string);
-            if (users == null) {
-                users = new ArrayList<String>();
-                usedBy.put(string, users);
-            }
-            users.add(file.getAbsolutePath());
-        }
-    }
-
-    /**
-     * The {@link Groups} class servers as an algorithm for sorting the usedBy
-     * map from the {@link ImportCandidates#walk(File, Collection)} method.
-     * These objects should never leave the outer class.
-     *
-     * It is important that the Groups keep their used files ordered.
-     * @see ImportCandidates#getOrderedFiles()
-     */
-    private static class Groups {
-
-        private class Group {
-            String key;
-            List<String> theyUseMe;
-            List<String> iUseThem;
-
-            public Group(String key) {
-                this.key = key;
-                this.theyUseMe = new ArrayList<String>(usedBy.get(key));
-                this.theyUseMe.remove(key);
-                this.iUseThem = new ArrayList<String>();
-                for (Map.Entry<String, List<String>> entry : usedBy.entrySet()) {
-                    if (entry.getValue().contains(key)) {
-                        iUseThem.add(entry.getKey());
-                    }
-                }
-                iUseThem.remove(key);
-            }
-
-            public void removeSelfIfSingular() {
-                int users = theyUseMe.size();
-                int used = iUseThem.size();
-                if (used <= 1 && users > 0) {
-                    groups.remove(key);
-                }
-            }
-
-            public String toShortString() {
-                StringBuilder sb = new StringBuilder();
-                sb.append(key);
-                sb.append("\n");
-                for (String val : iUseThem) {
-                    sb.append(val);
-                    sb.append("\n");
-                }
-                return sb.toString();
-            }
-
-            @Override
-            public String toString() {
-                StringBuilder sb = new StringBuilder();
-                sb.append("#======================================\n");
-                sb.append("# Group: " + key);
-                sb.append("\n");
-                // sb.append("# Used by: ");
-                // for (String key : theyUseMe) {
-                // sb.append(" " + key + " ");
-                // }
-                // sb.append("\n");
-                sb.append(key);
-                sb.append("\n");
-                for (String val : iUseThem) {
-                    sb.append(val);
-                    sb.append("\n");
-                }
-                return sb.toString();
-            }
-
-        }
-
-        private final Map<String, List<String>> usedBy;
-        private final Map<String, Group> groups = new LinkedHashMap<String, Group>();
-        private List<String> ordering;
-
-        Groups(Map<String, List<String>> usedBy) {
-            this.usedBy = usedBy;
-            for (String key : usedBy.keySet()) {
-                groups.put(key, new Group(key));
-            }
-        }
-
-        public int size() {
-            return ordering.size();
-        }
-
-        @SuppressWarnings("unused")
-		public List<String> getPaths() {
-            size(); // Check.
-            return ordering;
-        }
-
-        Groups parse(List<ImportContainer> containers) {
-            if (ordering != null) {
-                throw new RuntimeException("Already ordered");
-            }
-            for (Group g : new ArrayList<Group>(groups.values())) {
-                g.removeSelfIfSingular();
-            }
-            ordering = new ArrayList<String>(groups.keySet());
-            // Here we remove all the superfluous import containers.
-            List<ImportContainer> copy = new ArrayList<ImportContainer>(
-                    containers);
-            containers.clear();
-            for (String key : ordering) {
-                for (ImportContainer importContainer : copy) {
-                    if (importContainer.getFile().getAbsolutePath().equals(key)) {
-                        containers.add(importContainer);
-                    }
-                }
-            }
-            // Now rewrite the filename chosen based on the first file in the
-            // getUsedFiles.
-            for (ImportContainer c : containers) {
-                c.setFile(new File(c.getUsedFiles()[0]));
-            }
-            return this;
-        }
-
-        @SuppressWarnings("unused")
-		void print() {
-            Collection<Group> values = groups.values();
-            if (values.size() == 1) {
-                System.out.println(values.iterator().next().toShortString());
-            } else {
-                for (Group g : values) {
-                    System.out.println(g);
-                }
-            }
-        }
-
-        @Override
-        public String toString() {
-            StringBuilder sb = new StringBuilder();
-            for (Group g : groups.values()) {
-                sb.append(g.toString());
-                sb.append("\n");
-            }
-            return sb.toString();
-        }
-
-        static void line(String s) {
-            System.out.println("\n# ************ " + s + " ************ \n");
-        }
-
-        static Groups test(int count, Map<String, List<String>> t) {
-
-            System.out.println("\n\n");
-            line("TEST " + count);
-            Groups g = new Groups(t);
-            System.out.println(g);
-            g.parse(new ArrayList<ImportContainer>());
-            line("RESULT " + count);
-            System.out.println(g);
-            return g;
-
-        }
-
-        @SuppressWarnings("unused")
-		static Groups test() {
-            System.out.println("\n");
-            line("NOTICE");
-            System.out
-                    .println("#  You have entered \"\" \"\" as the path to import.");
-            System.out
-                    .println("#  This runs the test suite. If you would like to");
-            System.out.println("#  import the current directory use \"\".");
-
-            Map<String, List<String>> t = new LinkedHashMap<String, List<String>>();
-            t.put("a.dv.log", Arrays.asList("b.dv"));
-            t.put("b.dv", Arrays.asList("b.dv"));
-            test(1, t);
-
-            t = new LinkedHashMap<String, List<String>>();
-            t.put("a.png", Arrays.asList("a.png"));
-            test(2, t);
-
-            t = new LinkedHashMap<String, List<String>>();
-            t.put("a.tiff", Arrays.asList("a.tiff", "c.lei"));
-            t.put("b.tiff", Arrays.asList("b.tiff", "c.lei"));
-            t.put("c.lei", Arrays.asList("c.lei"));
-            test(3, t);
-
-            t = new LinkedHashMap<String, List<String>>();
-            t.put("overlay.tiff", Arrays.asList("overlay.tiff"));
-            t.put("b.tiff", Arrays.asList("b.tiff", "overlay.tiff"));
-            return test(4, t);
-
-        }
-
     }
 
 }
