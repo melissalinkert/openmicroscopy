@@ -144,7 +144,7 @@ public class WikiView
 		{
 			s = matcher.start();
 			e = matcher.end();
-			p = new Position(s, e);
+			p = new Position(s, e - 1);
 			if (alreadyMatched(p))
 				continue;
 			positionList.add(p);
