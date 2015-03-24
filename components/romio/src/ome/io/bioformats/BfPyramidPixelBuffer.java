@@ -21,6 +21,8 @@ import java.util.List;
 
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
+import loci.formats.IFormatReader;
+import loci.formats.Memoizer;
 import loci.formats.in.TiffReader;
 import loci.formats.meta.IMetadata;
 import loci.formats.out.TiffWriter;
@@ -62,7 +64,7 @@ public class BfPyramidPixelBuffer implements PixelBuffer {
     /**
      * Bio-Formats implementation the delegate uses to read the backing TIFF.
      */
-    protected OmeroPixelsPyramidReader reader;
+    protected IFormatReader reader;
 
     /**
      * File's who absolute path will be passed to
@@ -207,7 +209,7 @@ public class BfPyramidPixelBuffer implements PixelBuffer {
             // note: we double checked readerFile exists just in case.
             lockFile.delete();
         }
-        reader = new OmeroPixelsPyramidReader();
+        reader = new Memoizer(new OmeroPixelsPyramidReader(), 0);
         delegate = new BfPixelBuffer(readerFile.getAbsolutePath(), reader);
         byteOrder = delegate.isLittleEndian()? ByteOrder.LITTLE_ENDIAN
                 : ByteOrder.BIG_ENDIAN;
