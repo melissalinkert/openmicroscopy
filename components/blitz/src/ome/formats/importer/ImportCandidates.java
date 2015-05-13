@@ -424,7 +424,10 @@ public class ImportCandidates extends DirectoryWalker
                 ic.setDoThumbnails(config.doThumbnails.get());
                 ic.setNoStatsInfo(config.noStatsInfo.get());
                 String configImageName = config.userSpecifiedName.get();
-                if (configImageName == null)
+
+                // if a plate is imported, do not overwrite the plate name with
+                // the name of the chosen file (see ome.formats.model.WellProcessor)
+                if (configImageName == null && !isSPW)
                 {
                     ic.setUserSpecifiedName(file.getName());
                 }
