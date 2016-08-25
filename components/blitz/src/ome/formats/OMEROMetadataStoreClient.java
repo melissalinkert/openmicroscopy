@@ -39,6 +39,7 @@ import static ome.formats.model.UnitsFactory.convertPressure;
 import static ome.formats.model.UnitsFactory.convertTemperature;
 import static ome.formats.model.UnitsFactory.convertTime;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -55,7 +56,9 @@ import java.util.Map.Entry;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import loci.formats.FormatException;
 import loci.formats.IFormatReader;
+import loci.formats.IHCSReader;
 import loci.formats.ImageReader;
 import loci.formats.meta.IMinMaxStore;
 import loci.formats.meta.MetadataStore;
@@ -264,6 +267,7 @@ public class OMEROMetadataStoreClient
     private Map<String, String[]> referenceStringCache;
 
     private LSID screenKey;
+    private boolean reusingPlate = false;
 
     /** Our model processors. Will be called on saveToDB(). */
     private List<ModelProcessor> modelProcessors;
@@ -442,6 +446,7 @@ public class OMEROMetadataStoreClient
 
         // Default model processors
         modelProcessors = new ArrayList<ModelProcessor>();
+
         modelProcessors.add(new PixelsProcessor());
         modelProcessors.add(new ChannelProcessor());
         modelProcessors.add(new InstrumentProcessor());
@@ -464,6 +469,7 @@ public class OMEROMetadataStoreClient
             }
         }
         keepAlive.setClient(this); // This is used elsewhere.
+        reusingPlate = false;
     }
 
     /**
@@ -1266,16 +1272,21 @@ public class OMEROMetadataStoreClient
         return reader;
     }
 
+    private IFormatReader getBaseReader() {
+        IFormatReader reader = getReader();
+        if (reader instanceof ImageReader) {
+            reader = ((ImageReader) reader).getReader();
+        }
+        return reader;
+    }
+
     /**
      * Retrieves a Format enumeration for the current reader's type.
      * @return See above.
      */
     private Format getImageFormat()
     {
-        IFormatReader reader = getReader();
-        if (reader instanceof ImageReader) {
-            reader = ((ImageReader) reader).getReader();
-        }
+        IFormatReader reader = getBaseReader();
         String value = reader.getClass().toString();
         value = value.replace("class loci.formats.in.", "");
         value = value.replace("Reader", "");
@@ -6012,6 +6023,67 @@ public class OMEROMetadataStoreClient
             new LinkedHashMap<Index, Integer>();
         indexes.put(Index.PLATE_INDEX, plateIndex);
         IObjectContainer o = getIObjectContainer(Plate.class, indexes);
+        reusingPlate = false;
+        if (getBaseReader() instanceof IHCSReader) {
+          try {
+            StringBuilder sb = new StringBuilder();
+            ParametersI param = new ParametersI();
+            sb.append("select plate from Plate as plate ");
+            sb.append("left outer join fetch plate.wells as wells ");
+            sb.append("left outer join fetch plate.plateAcquisitions as pa ");
+            sb.append("where plate.externalidentifier is not null");
+
+            List<IObject> plates = iQuery.findAllByQuery(sb.toString(), param);
+
+            if (plates.size() == 0) {
+              throw new ServerError();
+            }
+
+            int[] indexesArray = new int[] {plateIndex};
+             LSID lsid = new LSID(Plate.class, indexesArray);
+
+            Map<String, Integer> asString = new HashMap<String, Integer>();
+            for (Entry<Index, Integer> v : indexes.entrySet())
+            {
+              asString.put(v.getKey().toString(), v.getValue());
+            }
+
+            if (!containerCache.containsKey(lsid))
+            {
+              IObjectContainer c = new IObjectContainer();
+              c.indexes = asString;
+              c.LSID = lsid.toString();
+
+              for (IObject p : plates) {
+                Plate plate = (Plate) p;
+                RString externalID = plate.getExternalIdentifier();
+                String readerPlateID = null;
+                try {
+                  readerPlateID = ((IHCSReader) getBaseReader()).getPlateIdentifier();
+                }
+                catch (FormatException e) {
+                  log.warn("Could not retrieve external identifer", e);
+                }
+                catch (IOException e) {
+                  log.warn("Could not retrieve external identifer", e);
+                }
+                if (!externalID.equals(readerPlateID)) {
+                  continue;
+                }
+                c.sourceObject = plate;
+              }
+              if (c.sourceObject == null) {
+                throw new ServerError();
+              }
+              reusingPlate = true;
+              containerCache.put(lsid, c);
+            }
+            o = containerCache.get(lsid);
+          }
+          catch (ServerError e) {
+          }
+        }
+
         o.LSID = id;
         addAuthoritativeContainer(Plate.class, id, o);
     }
@@ -7373,6 +7445,7 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellID(String id, int plateIndex, int wellIndex)
     {
+        if (reusingPlate) return;
         checkDuplicateLSID(Well.class, id);
         LinkedHashMap<Index, Integer> indexes =
             new LinkedHashMap<Index, Integer>();
@@ -7400,6 +7473,7 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellColor(Color color, int plateIndex, int wellIndex)
     {
+        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setRed(toRType(color.getRed()));
         o.setGreen(toRType(color.getGreen()));
@@ -7414,6 +7488,7 @@ public class OMEROMetadataStoreClient
     public void setWellColumn(NonNegativeInteger column, int plateIndex,
             int wellIndex)
     {
+        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setColumn(toRType(column));
     }
@@ -7425,6 +7500,7 @@ public class OMEROMetadataStoreClient
     public void setWellExternalDescription(String externalDescription,
             int plateIndex, int wellIndex)
     {
+        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setExternalDescription(toRType(externalDescription));
     }
@@ -7436,6 +7512,7 @@ public class OMEROMetadataStoreClient
     public void setWellExternalIdentifier(String externalIdentifier,
             int plateIndex, int wellIndex)
     {
+        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setExternalIdentifier(toRType(externalIdentifier));
     }
@@ -7456,6 +7533,7 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellRow(NonNegativeInteger row, int plateIndex, int wellIndex)
     {
+        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setRow(toRType(row));
     }
