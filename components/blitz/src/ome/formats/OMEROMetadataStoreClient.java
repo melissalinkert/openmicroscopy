@@ -268,6 +268,8 @@ public class OMEROMetadataStoreClient
 
     private LSID screenKey;
     private boolean reusingPlate = false;
+    private Long plateID = null;
+    private int plateAcqCount = 0;
 
     /** Our model processors. Will be called on saveToDB(). */
     private List<ModelProcessor> modelProcessors;
@@ -1090,7 +1092,6 @@ public class OMEROMetadataStoreClient
 
         closeQuietly(delegate);
         delegate = null;
-
     }
 
     /**
@@ -6022,34 +6023,39 @@ public class OMEROMetadataStoreClient
         LinkedHashMap<Index, Integer> indexes =
             new LinkedHashMap<Index, Integer>();
         indexes.put(Index.PLATE_INDEX, plateIndex);
-        IObjectContainer o = getIObjectContainer(Plate.class, indexes);
+        IObjectContainer o = null;
         reusingPlate = false;
+        plateID = null;
+        plateAcqCount = 0;
+        log.warn("base reader instance of IHCSReader = {}", getBaseReader() instanceof IHCSReader);
         if (getBaseReader() instanceof IHCSReader) {
           try {
             StringBuilder sb = new StringBuilder();
             ParametersI param = new ParametersI();
             sb.append("select plate from Plate as plate ");
             sb.append("left outer join fetch plate.wells as wells ");
-            sb.append("left outer join fetch plate.plateAcquisitions as pa ");
-            sb.append("where plate.externalidentifier is not null");
+            sb.append("left outer join fetch plate.plateAcquisitions as pa");
 
             List<IObject> plates = iQuery.findAllByQuery(sb.toString(), param);
+            log.warn("found {} plates", plates.size());
 
             if (plates.size() == 0) {
               throw new ServerError();
             }
 
             int[] indexesArray = new int[] {plateIndex};
-             LSID lsid = new LSID(Plate.class, indexesArray);
+            LSID lsid = new LSID(Plate.class, indexesArray);
 
             Map<String, Integer> asString = new HashMap<String, Integer>();
             for (Entry<Index, Integer> v : indexes.entrySet())
             {
               asString.put(v.getKey().toString(), v.getValue());
             }
+            log.warn("lsid = {}", lsid);
 
             if (!containerCache.containsKey(lsid))
             {
+              log.warn("  not found in container cache");
               IObjectContainer c = new IObjectContainer();
               c.indexes = asString;
               c.LSID = lsid.toString();
@@ -6057,6 +6063,9 @@ public class OMEROMetadataStoreClient
               for (IObject p : plates) {
                 Plate plate = (Plate) p;
                 RString externalID = plate.getExternalIdentifier();
+                if (externalID == null || externalID.getValue() == null) {
+                  continue;
+                }
                 String readerPlateID = null;
                 try {
                   readerPlateID = ((IHCSReader) getBaseReader()).getPlateIdentifier();
@@ -6067,9 +6076,13 @@ public class OMEROMetadataStoreClient
                 catch (IOException e) {
                   log.warn("Could not retrieve external identifer", e);
                 }
-                if (!externalID.equals(readerPlateID)) {
+                log.warn("readerPlateID = {}", readerPlateID);
+                log.warn("externalID = {}", externalID);
+                if (!externalID.getValue().equals(readerPlateID)) {
                   continue;
                 }
+                plateAcqCount = plate.sizeOfPlateAcquisitions();
+                plateID = plate.getId().getValue();
                 c.sourceObject = plate;
               }
               if (c.sourceObject == null) {
@@ -6081,7 +6094,12 @@ public class OMEROMetadataStoreClient
             o = containerCache.get(lsid);
           }
           catch (ServerError e) {
+            log.warn("Plate lookup failed", e);
           }
+        }
+
+        if (o == null) {
+          o = getIObjectContainer(Plate.class, indexes);
         }
 
         o.LSID = id;
@@ -7445,7 +7463,6 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellID(String id, int plateIndex, int wellIndex)
     {
-        if (reusingPlate) return;
         checkDuplicateLSID(Well.class, id);
         LinkedHashMap<Index, Integer> indexes =
             new LinkedHashMap<Index, Integer>();
@@ -7473,7 +7490,6 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellColor(Color color, int plateIndex, int wellIndex)
     {
-        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setRed(toRType(color.getRed()));
         o.setGreen(toRType(color.getGreen()));
@@ -7488,7 +7504,6 @@ public class OMEROMetadataStoreClient
     public void setWellColumn(NonNegativeInteger column, int plateIndex,
             int wellIndex)
     {
-        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setColumn(toRType(column));
     }
@@ -7500,7 +7515,6 @@ public class OMEROMetadataStoreClient
     public void setWellExternalDescription(String externalDescription,
             int plateIndex, int wellIndex)
     {
-        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setExternalDescription(toRType(externalDescription));
     }
@@ -7512,7 +7526,6 @@ public class OMEROMetadataStoreClient
     public void setWellExternalIdentifier(String externalIdentifier,
             int plateIndex, int wellIndex)
     {
-        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
         o.setExternalIdentifier(toRType(externalIdentifier));
     }
@@ -7533,9 +7546,14 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellRow(NonNegativeInteger row, int plateIndex, int wellIndex)
     {
-        if (reusingPlate) return;
         Well o = getWell(plateIndex, wellIndex);
-        o.setRow(toRType(row));
+        // temporary workaround for not using the existing well from the database
+        if (reusingPlate) {
+          o.setRow(toRType(row.getValue() + plateAcqCount * getPlate(plateIndex).getRows().getValue()));
+        }
+        else {
+          o.setRow(toRType(row));
+        }
     }
 
     //////// WellSample /////////
