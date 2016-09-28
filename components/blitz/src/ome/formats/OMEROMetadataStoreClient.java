@@ -44,6 +44,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -6034,7 +6035,8 @@ public class OMEROMetadataStoreClient
             ParametersI param = new ParametersI();
             sb.append("select plate from Plate as plate ");
             sb.append("left outer join fetch plate.wells as wells ");
-            sb.append("left outer join fetch plate.plateAcquisitions as pa");
+            sb.append("left outer join fetch plate.plateAcquisitions as pa ");
+            sb.append("left outer join fetch wells.wellSamples");
 
             List<IObject> plates = iQuery.findAllByQuery(sb.toString(), param);
             log.warn("found {} plates", plates.size());
@@ -7466,9 +7468,53 @@ public class OMEROMetadataStoreClient
         checkDuplicateLSID(Well.class, id);
         LinkedHashMap<Index, Integer> indexes =
             new LinkedHashMap<Index, Integer>();
-        indexes.put(Index.PLATE_INDEX, plateIndex);
-        indexes.put(Index.WELL_INDEX, wellIndex);
-        IObjectContainer o = getIObjectContainer(Well.class, indexes);
+        IObjectContainer o = null;
+        if (reusingPlate) {
+          indexes.put(Index.PLATE_INDEX, plateIndex);
+          Plate p = getSourceObject(Plate.class, indexes);
+          Well[] wells = p.copyWells().toArray(new Well[0]);
+          Arrays.sort(wells, new Comparator<Well>() {
+            @Override
+            public int compare(Well w1, Well w2) {
+              int row1 = w1.getRow().getValue();
+              int row2 = w2.getRow().getValue();
+              int col1 = w1.getColumn().getValue();
+              int col2 = w2.getColumn().getValue();
+
+              if (row1 != row2) {
+                return row1 - row2;
+              }
+              return col1 - col2;
+            }
+          });
+          Well w = wells[wellIndex];
+
+          indexes.put(Index.WELL_INDEX, wellIndex);
+
+          int[] indexesArray = new int[] {plateIndex, wellIndex};
+          LSID lsid = new LSID(Well.class, indexesArray);
+
+          if (!containerCache.containsKey(lsid))
+          {
+              Map<String, Integer> asString = new HashMap<String, Integer>();
+              for (Entry<Index, Integer> v : indexes.entrySet())
+              {
+                asString.put(v.getKey().toString(), v.getValue());
+              }
+
+              IObjectContainer c = new IObjectContainer();
+              c.indexes = asString;
+              c.LSID = lsid.toString();
+              c.sourceObject = w;
+              containerCache.put(lsid, c);
+          }
+          o = containerCache.get(lsid);
+        }
+        else {
+          indexes.put(Index.PLATE_INDEX, plateIndex);
+          indexes.put(Index.WELL_INDEX, wellIndex);
+          o = getIObjectContainer(Well.class, indexes);
+        }
         o.LSID = id;
         addAuthoritativeContainer(Well.class, id, o);
     }
@@ -7490,6 +7536,9 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellColor(Color color, int plateIndex, int wellIndex)
     {
+        if (reusingPlate) {
+          return;
+        }
         Well o = getWell(plateIndex, wellIndex);
         o.setRed(toRType(color.getRed()));
         o.setGreen(toRType(color.getGreen()));
@@ -7504,6 +7553,9 @@ public class OMEROMetadataStoreClient
     public void setWellColumn(NonNegativeInteger column, int plateIndex,
             int wellIndex)
     {
+        if (reusingPlate) {
+          return;
+        }
         Well o = getWell(plateIndex, wellIndex);
         o.setColumn(toRType(column));
     }
@@ -7515,6 +7567,9 @@ public class OMEROMetadataStoreClient
     public void setWellExternalDescription(String externalDescription,
             int plateIndex, int wellIndex)
     {
+        if (reusingPlate) {
+          return;
+        }
         Well o = getWell(plateIndex, wellIndex);
         o.setExternalDescription(toRType(externalDescription));
     }
@@ -7526,6 +7581,9 @@ public class OMEROMetadataStoreClient
     public void setWellExternalIdentifier(String externalIdentifier,
             int plateIndex, int wellIndex)
     {
+        if (reusingPlate) {
+          return;
+        }
         Well o = getWell(plateIndex, wellIndex);
         o.setExternalIdentifier(toRType(externalIdentifier));
     }
@@ -7536,6 +7594,9 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellReagentRef(String reagent, int plateIndex, int wellIndex)
     {
+        if (reusingPlate) {
+          return;
+        }
         LSID key = new LSID(Well.class, plateIndex, wellIndex);
         addReference(key, new LSID(reagent));
     }
@@ -7546,14 +7607,11 @@ public class OMEROMetadataStoreClient
     @Override
     public void setWellRow(NonNegativeInteger row, int plateIndex, int wellIndex)
     {
-        Well o = getWell(plateIndex, wellIndex);
-        // temporary workaround for not using the existing well from the database
         if (reusingPlate) {
-          o.setRow(toRType(row.getValue() + plateAcqCount * getPlate(plateIndex).getRows().getValue()));
+          return;
         }
-        else {
-          o.setRow(toRType(row));
-        }
+        Well o = getWell(plateIndex, wellIndex);
+        o.setRow(toRType(row));
     }
 
     //////// WellSample /////////
