@@ -6914,8 +6914,10 @@ public class OMEROMetadataStoreClient
     public void setScreenPlateRef(String plate, int screenIndex,
             int plateRefIndex)
     {
-        screenKey = new LSID(Screen.class, screenIndex);
-        addReference(screenKey, new LSID(plate));
+        if (!reusingPlate) {
+          screenKey = new LSID(Screen.class, screenIndex);
+          addReference(screenKey, new LSID(plate));
+        }
     }
 
     /* (non-Javadoc)
